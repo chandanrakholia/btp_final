@@ -42,6 +42,10 @@ def upload_screenshot():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route("/", methods=["GET"])
+def get():
+    return jsonify(message="GET Welcome"), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3001, debug=True)
