@@ -1,85 +1,51 @@
-from flask import Flask, jsonify
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import datetime
 import os
 import re
+import base64
+from main import detect_phishing_from_screenshot 
 import time
-import pandas as pd
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-from main import detect_phishing_from_screenshot  # Your detection logic
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS
+CORS(app)
 
-# Prepare output file
-RESULTS_FILE = "phishing_detection_results.txt"
-with open(RESULTS_FILE, "w") as f:
-    f.write("URL\tResult\n")
+UPLOAD_FOLDER = "screenshots"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Sanitize file name for screenshot
 def sanitize_filename(url):
-    return re.sub(r"[^\w.-]", "_", url) + ".png"
+    """Convert URL into a safe filename."""
+    filename = re.sub(r"[^\w.-]", "_", url)
+    return filename + ".png"
 
-# Take screenshot using headless Chrome
-def take_screenshot(url):
-    filename = sanitize_filename(url)
-    output_dir = "screenshots"
-    os.makedirs(output_dir, exist_ok=True)
-    path = os.path.join(output_dir, filename)
-
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-
+@app.route("/upload", methods=["POST"])
+def upload_screenshot():
     try:
-        driver.get(url)
-        time.sleep(2)
-        driver.save_screenshot(path)
-        return path
-    except Exception as e:
-        print(f"❌ Error capturing screenshot for {url}: {e}")
-        return None
-    finally:
-        driver.quit()
+        start_time = time.time()
+        data = request.get_json()
+        image_data = data.get("image")
+        url = data.get("url")
+        filename = sanitize_filename(url)
+        screenshot_path = os.path.join(UPLOAD_FOLDER, filename)
+        with open(screenshot_path, "wb") as f:
+            f.write(base64.b64decode(image_data.split(",")[1]))
 
-def process_csv():
-    try:
-        df = pd.read_csv("verified_online.csv")
-        for index, row in df.iterrows():
-            url = row.get("url")
-            if not url:
-                continue
+        print(f"Screenshot saved: {screenshot_path}\n")
 
-            print(f"⏳ Processing: {url}")
-            screenshot_path = take_screenshot(url)
-            if not screenshot_path:
-                result_text = "screenshot_error"
-            else:
-                try:
-                    result = detect_phishing_from_screenshot(url, screenshot_path)
-                    result_text = str(result.get("verification_result", "not_detected"))
-                except Exception as e:
-                    print(f"❌ Detection error for {url}: {e}")
-                    result_text = "detection_error"
+        result = detect_phishing_from_screenshot(url, screenshot_path)
 
-            # Write result to text file
-            with open(RESULTS_FILE, "a") as f:
-                f.write(f"{url}\t{result_text}\n")
+        print(result)
+        end_time = time.time()
+        print(f"Total Processing Time {end_time - start_time:.2f} seconds.\n")
 
-        return jsonify({"status": "completed", "output_file": RESULTS_FILE})
+        return jsonify(result), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route("/", methods=["GET"])
+def get():
+    return jsonify(message="GET Welcome"), 200
 
-process_csv()
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3001, debug=True)
